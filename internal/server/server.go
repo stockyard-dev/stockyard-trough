@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,9 +28,10 @@ type Server struct {
 	mu      sync.RWMutex
 	proxies map[string]*httputil.ReverseProxy // upstream_id → proxy
 	upMap   map[string]*store.Upstream        // upstream_id → upstream
+	limits  Limits
 }
 
-func New(db *store.DB, port int, adminKey string) *Server {
+func New(db *store.DB, port int, adminKey string, limits Limits) *Server {
 	s := &Server{
 		db:       db,
 		mux:      http.NewServeMux(),
@@ -38,6 +40,7 @@ func New(db *store.DB, port int, adminKey string) *Server {
 		client:   &http.Client{Timeout: 120 * time.Second},
 		proxies:  make(map[string]*httputil.ReverseProxy),
 		upMap:    make(map[string]*store.Upstream),
+		limits:   limits,
 	}
 	s.loadUpstreams()
 	s.routes()
@@ -242,6 +245,13 @@ func (s *Server) handleCreateUpstream(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.BaseURL == "" {
 		writeJSON(w, 400, map[string]string{"error": "name and base_url required"})
 		return
+	}
+	if s.limits.MaxUpstreams > 0 {
+		ups, _ := s.db.ListUpstreams()
+		if LimitReached(s.limits.MaxUpstreams, len(ups)) {
+			writeJSON(w, 402, map[string]string{"error": "free tier limit: " + strconv.Itoa(s.limits.MaxUpstreams) + " service max — upgrade to Pro", "upgrade": "https://stockyard.dev/trough/"})
+			return
+		}
 	}
 	u, err := s.db.CreateUpstream(req.Name, req.BaseURL)
 	if err != nil {
