@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/alerts/{id}", s.admin(s.handleDeleteAlert))
 
 	s.mux.HandleFunc("GET /api/stats", s.admin(s.handleStats))
+	s.mux.HandleFunc("GET /api/anomalies", s.admin(s.handleAnomalies))
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
@@ -200,6 +201,14 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		RuleID:       ruleID,
 		SourceIP:     sourceIP,
 	})
+
+	// Warn on free tier request cap (soft — never drop)
+	if s.limits.MaxRequestsPerMonth > 0 {
+		monthTotal := s.db.MonthlyRequestCount(upstreamID)
+		if LimitReached(s.limits.MaxRequestsPerMonth, monthTotal) {
+			w.Header().Set("X-License-Warning", "free tier request limit reached — upgrade to Pro at https://stockyard.dev/trough/")
+		}
+	}
 
 	if costCents > 0 {
 		log.Printf("[trough] %s %s/%s → %d (%dms) cost=$%0.4f",
@@ -341,8 +350,16 @@ func (s *Server) handleListRequests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSpend(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("granularity") == "hourly" && !s.limits.SpendTrends {
+		writeJSON(w, 402, map[string]string{"error": "hourly spend trends require Pro — upgrade at https://stockyard.dev/trough/", "upgrade": "https://stockyard.dev/trough/"})
+		return
+	}
 	days := 30
 	fmt.Sscanf(r.URL.Query().Get("days"), "%d", &days)
+	// Enforce history retention limit
+	if s.limits.HistoryDays > 0 && days > s.limits.HistoryDays {
+		days = s.limits.HistoryDays
+	}
 	summary := s.db.SpendSummary(r.URL.Query().Get("upstream_id"), days)
 	writeJSON(w, 200, summary)
 }
@@ -374,6 +391,10 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.limits.SpendAlerts {
+		writeJSON(w, 402, map[string]string{"error": "spend alerts require Pro — upgrade at https://stockyard.dev/trough/", "upgrade": "https://stockyard.dev/trough/"})
+		return
+	}
 	var req struct {
 		UpstreamID     string `json:"upstream_id"`
 		Period         string `json:"period"`
@@ -395,6 +416,17 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
 	s.db.DeleteAlert(r.PathValue("id"))
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
+	if !s.limits.AnomalyDetection {
+		writeJSON(w, 402, map[string]string{"error": "anomaly detection requires Pro — upgrade at https://stockyard.dev/trough/", "upgrade": "https://stockyard.dev/trough/"})
+		return
+	}
+	// Anomaly detection: flag upstreams/routes where spend or request count
+	// is >2 standard deviations above the 7-day rolling average
+	anomalies := s.db.DetectAnomalies()
+	writeJSON(w, 200, map[string]any{"anomalies": anomalies})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {

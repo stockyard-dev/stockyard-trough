@@ -506,3 +506,79 @@ func genID(n int) string {
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// MonthlyRequestCount returns the number of proxied requests this calendar month for an upstream.
+// If upstreamID is empty, counts across all upstreams.
+func (db *DB) MonthlyRequestCount(upstreamID string) int {
+	var n int
+	if upstreamID != "" {
+		db.conn.QueryRow(
+			"SELECT COUNT(*) FROM requests WHERE upstream_id=? AND created_at >= date('now','start of month')",
+			upstreamID).Scan(&n)
+	} else {
+		db.conn.QueryRow(
+			"SELECT COUNT(*) FROM requests WHERE created_at >= date('now','start of month')").Scan(&n)
+	}
+	return n
+}
+
+// Anomaly represents a detected spend or volume spike.
+type Anomaly struct {
+	UpstreamID   string  `json:"upstream_id"`
+	UpstreamName string  `json:"upstream_name"`
+	Path         string  `json:"path"`
+	Type         string  `json:"type"` // "spend" or "volume"
+	TodayCents   int     `json:"today_cents,omitempty"`
+	AvgCents     float64 `json:"avg_daily_cents,omitempty"`
+	TodayReqs    int     `json:"today_requests,omitempty"`
+	AvgReqs      float64 `json:"avg_daily_requests,omitempty"`
+	Ratio        float64 `json:"ratio"` // today / avg
+}
+
+// DetectAnomalies finds routes where today's spend or volume is >2x the 7-day daily average.
+func (db *DB) DetectAnomalies() []Anomaly {
+	query := `
+SELECT upstream_id, upstream_name, path,
+       SUM(CASE WHEN date(created_at)=date('now') THEN cost_cents ELSE 0 END) as today_cost,
+       AVG(CASE WHEN date(created_at)>=date('now','-7 days') AND date(created_at)<date('now') THEN daily_cost ELSE NULL END) as avg_cost,
+       SUM(CASE WHEN date(created_at)=date('now') THEN 1 ELSE 0 END) as today_reqs,
+       AVG(CASE WHEN date(created_at)>=date('now','-7 days') AND date(created_at)<date('now') THEN daily_reqs ELSE NULL END) as avg_reqs
+FROM (
+  SELECT upstream_id, upstream_name, path, date(created_at) as d,
+         SUM(cost_cents) as daily_cost, COUNT(*) as daily_reqs, created_at
+  FROM requests
+  WHERE created_at >= date('now','-8 days')
+  GROUP BY upstream_id, path, date(created_at)
+)
+GROUP BY upstream_id, path
+HAVING today_cost > avg_cost * 2 OR today_reqs > avg_reqs * 2`
+
+	rows, err := db.conn.Query(query)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []Anomaly
+	for rows.Next() {
+		var a Anomaly
+		var todayCost, todayReqs int
+		var avgCost, avgReqs float64
+		if rows.Scan(&a.UpstreamID, &a.UpstreamName, &a.Path, &todayCost, &avgCost, &todayReqs, &avgReqs) != nil {
+			continue
+		}
+		if avgCost > 0 && float64(todayCost) > avgCost*2 {
+			a.Type = "spend"
+			a.TodayCents = todayCost
+			a.AvgCents = avgCost
+			a.Ratio = float64(todayCost) / avgCost
+		} else {
+			a.Type = "volume"
+			a.TodayReqs = todayReqs
+			a.AvgReqs = avgReqs
+			a.Ratio = float64(todayReqs) / avgReqs
+		}
+		out = append(out, a)
+	}
+	return out
+}
