@@ -74,6 +74,7 @@ func main() {
 	log.Printf("  Spend:   http://localhost:%d/api/spend", port)
 	log.Printf("  Export:  http://localhost:%d/api/export.csv", port)
 	log.Printf("  Health:  http://localhost:%d/health", port)
+	log.Printf("  Dashboard: http://localhost:%d/ui", port)
 	log.Printf("")
 
 	srv := server.New(db, port, adminKey, limits)
