@@ -1,0 +1,32 @@
+# docker-compose.yml for trough
+# Quick start:
+#   FENCE_ENCRYPTION_KEY=$(openssl rand -hex 32) docker compose up -d
+#
+# For production, set env vars in a .env file or your orchestrator secrets.
+# Never commit real keys to version control.
+
+services:
+  trough:
+    image: ghcr.io/stockyard-dev/stockyard-trough:latest
+    # Or build locally:
+    # build: .
+    ports:
+      - "8790:8790"
+    environment:
+      - PORT=${{STOCKYARD_PORT:-8790}}
+      - DATA_DIR=${{STOCKYARD_DATA_DIR:-/data}}
+      - TROUGH_ADMIN_KEY=${{STOCKYARD_TROUGH_ADMIN_KEY:-changeme}}
+      - TROUGH_LICENSE_KEY=${{STOCKYARD_TROUGH_LICENSE_KEY:-}}
+    volumes:
+      - trough-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8790/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  trough-data:
+    driver: local
