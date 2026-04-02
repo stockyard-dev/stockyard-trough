@@ -1,6 +1,84 @@
+// Stockyard Trough — API cost monitor.
+// Track request counts, latency, and estimated cost for any HTTP API.
+// Single binary, embedded SQLite, zero external dependencies.
 package main
-import ("fmt";"log";"net/http";"os";"github.com/stockyard-dev/stockyard-trough/internal/server";"github.com/stockyard-dev/stockyard-trough/internal/store")
-func main(){port:=os.Getenv("PORT");if port==""{port="8670"};dataDir:=os.Getenv("DATA_DIR");if dataDir==""{dataDir="./trough-data"}
-db,err:=store.Open(dataDir);if err!=nil{log.Fatalf("trough: %v",err)};defer db.Close();srv:=server.New(db)
-fmt.Printf("\n  Trough — LLM API cost monitor\n  Dashboard:  http://localhost:%s/ui\n  API:        http://localhost:%s/api\n\n",port,port)
-log.Printf("trough: listening on :%s",port);log.Fatal(http.ListenAndServe(":"+port,srv))}
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+
+	"github.com/stockyard-dev/stockyard-trough/internal/server"
+	"github.com/stockyard-dev/stockyard-trough/internal/license"
+	"github.com/stockyard-dev/stockyard-trough/internal/store"
+)
+
+var version = "dev"
+
+func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Printf("trough %s\n", version)
+			os.Exit(0)
+		case "--health", "health":
+			fmt.Println("ok")
+			os.Exit(0)
+		}
+	}
+
+	log.SetFlags(log.Ltime | log.Lshortfile)
+
+	port := 8790
+	if p := os.Getenv("PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+
+	dataDir := "./data"
+	if d := os.Getenv("DATA_DIR"); d != "" {
+		dataDir = d
+	}
+
+	adminKey := os.Getenv("TROUGH_ADMIN_KEY")
+	if adminKey == "" {
+		log.Printf("[trough] TROUGH_ADMIN_KEY not set — admin API is open")
+	}
+
+	// License validation — offline Ed25519 check, no network call
+	licenseKey := os.Getenv("TROUGH_LICENSE_KEY")
+	licInfo, licErr := license.Validate(licenseKey, "trough")
+	if licenseKey != "" && licErr != nil {
+		log.Printf("[license] WARNING: %v — running in free tier", licErr)
+		licInfo = nil
+	}
+	limits := server.LimitsFor(licInfo)
+	if licInfo != nil && licInfo.IsPro() {
+		log.Printf("  License:   Pro (%s)", licInfo.CustomerID)
+	} else {
+		log.Printf("  License:   Free tier (set TROUGH_LICENSE_KEY to unlock Pro)")
+	}
+
+	db, err := store.Open(dataDir)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer db.Close()
+
+	log.Printf("")
+	log.Printf("  Stockyard Trough %s", version)
+	log.Printf("  Proxy:   http://localhost:%d/proxy/{upstream_id}/...", port)
+	log.Printf("  API:     http://localhost:%d/api", port)
+	log.Printf("  Spend:   http://localhost:%d/api/spend", port)
+	log.Printf("  Export:  http://localhost:%d/api/export.csv", port)
+	log.Printf("  Health:  http://localhost:%d/health", port)
+	log.Printf("  Dashboard: http://localhost:%d/ui", port)
+	log.Printf("")
+
+	srv := server.New(db, port, adminKey, limits)
+	if err := srv.Start(); err != nil {
+		log.Fatalf("server: %v", err)
+	}
+}
