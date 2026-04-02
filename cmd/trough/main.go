@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/stockyard-dev/stockyard-trough/internal/server"
-	"github.com/stockyard-dev/stockyard-trough/internal/license"
 	"github.com/stockyard-dev/stockyard-trough/internal/store"
 )
 
@@ -47,20 +46,7 @@ func main() {
 		log.Printf("[trough] TROUGH_ADMIN_KEY not set — admin API is open")
 	}
 
-	// License validation — offline Ed25519 check, no network call
-	licenseKey := os.Getenv("TROUGH_LICENSE_KEY")
-	licInfo, licErr := license.Validate(licenseKey, "trough")
-	if licenseKey != "" && licErr != nil {
-		log.Printf("[license] WARNING: %v — running in free tier", licErr)
-		licInfo = nil
-	}
-	limits := server.LimitsFor(licInfo)
-	if licInfo != nil && licInfo.IsPro() {
-		log.Printf("  License:   Pro (%s)", licInfo.CustomerID)
-	} else {
-		log.Printf("  License:   Free tier (set TROUGH_LICENSE_KEY to unlock Pro)")
-	}
-
+		limits := server.DefaultLimits()
 	db, err := store.Open(dataDir)
 	if err != nil {
 		log.Fatalf("database: %v", err)
