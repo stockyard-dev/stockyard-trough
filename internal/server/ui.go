@@ -76,6 +76,10 @@ input:focus,select:focus{border-color:var(--leather)}
   </div>
 </div>
 <div class="main">
+<div id="upgrade-banner" class="upgrade" style="display:none">
+  <strong style="color:var(--cream)">Free tier</strong> — 1 upstream, 1K requests/mo. <a href="https://stockyard.dev/trough/" target="_blank">Upgrade to Pro for $2.99/mo →</a>
+</div>
+
 
 <div class="cards">
   <div class="card"><span class="card-val" id="s-reqs">—</span><span class="card-lbl">Total Requests</span></div>
@@ -198,6 +202,7 @@ async function deleteUpstream(id){if(!confirm('Remove upstream?'))return;await f
 
 async function refresh(){await Promise.all([loadStats(),loadUpstreams(),loadSpend(),loadRequests()]);}
 refresh();autoReload(refresh,8000);
+fetch('/api/tier').then(r=>r.json()).then(j=>{if(j.tier==='free'){document.getElementById('upgrade-banner').style.display='block';var b=document.getElementById('tier-badge');if(b){b.className='badge badge-free';b.textContent='Free'}}else{var b=document.getElementById('tier-badge');if(b){b.className='badge badge-pro';b.textContent='Pro'}}}).catch(()=>{var b=document.getElementById('upgrade-banner');if(b)b.style.display='block'});
 </script></body></html>`
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {

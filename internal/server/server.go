@@ -103,6 +103,12 @@ func (s *Server) routes() {
 
 	// Proxy routes: /{upstream_id}/{path...}
 	s.mux.HandleFunc("/proxy/", s.handleProxy)
+
+	// Tier (for upgrade banner)
+	s.mux.HandleFunc("GET /api/tier", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"tier": s.limits.Tier, "upgrade_url": "https://stockyard.dev/trough/"})
+	})
+
 }
 
 func (s *Server) Start() error {
