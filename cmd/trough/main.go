@@ -53,6 +53,7 @@ func main() {
 	}
 	defer db.Close()
 
+	log.Printf("  Questions? hello@stockyard.dev")
 	log.Printf("")
 	log.Printf("  Stockyard Trough %s", version)
 	log.Printf("  Proxy:   http://localhost:%d/proxy/{upstream_id}/...", port)
